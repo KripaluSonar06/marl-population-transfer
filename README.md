@@ -75,7 +75,7 @@ attention 8% (high variance across seeds). So for shared and independent policie
 costs real safety compared to retraining; the attention policy transferred from 3 is about as safe as
 the attention policy trained on 4.
 
-## Limitations (say these in the report and Q&A)
+## Limitations
 
 - More agents in the same arena means a denser world, so some safety loss is expected even for a perfect
   policy. The greedy line shows how much comes from density alone.
@@ -83,4 +83,4 @@ the attention policy trained on 4.
   cannot see everyone. The attention policy sees all agents. Its advantage at larger N is therefore partly
   architecture and partly information. At N=3 both see everyone, and attention is still safer there.
 - The independent-policy rule for extra agents is one choice among several.
-- Small world, discrete dynamics, 3 seeds. These are empirical results, not guarantees.
+- Small world, discrete dynamics, 3 seeds. These are empirical results.
