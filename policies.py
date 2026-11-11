@@ -91,7 +91,9 @@ class AttentionPolicy(nn.Module):
 
 
 # Does this policy type need to see ALL other agents (True) or just the k nearest (False)?
-NEEDS_FULL_NEIGHBORS = {"shared": False, "independent": False, "attention": True}
+# "attention_knn" is an ABLATION: the same attention network, but fed only the 2 nearest neighbours,
+# so that architecture (set-based attention) can be separated from information (seeing every agent).
+NEEDS_FULL_NEIGHBORS = {"shared": False, "independent": False, "attention": True, "attention_knn": False}
 
 
 def build_policy(kind, n_agents, obs_dim, n_actions, hidden=64):
@@ -99,7 +101,7 @@ def build_policy(kind, n_agents, obs_dim, n_actions, hidden=64):
         return SharedPolicy(obs_dim, n_actions, hidden)
     if kind == "independent":
         return IndependentPolicies(n_agents, obs_dim, n_actions, hidden)
-    if kind == "attention":
+    if kind in ("attention", "attention_knn"):
         return AttentionPolicy(n_actions, hidden)
     raise ValueError(f"unknown policy kind: {kind}")
 

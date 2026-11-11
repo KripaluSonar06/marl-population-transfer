@@ -1,0 +1,448 @@
+% ==============================================================================================
+%  population_transfer_section.tex
+%  Individual contribution (Kripalu Sonar): population transfer N -> N+k with shared, independent
+%  and attention policies.
+%
+%  Use inside the team's main.tex with   \input{population_transfer_section}
+%  Needs these packages (ICLR style already loads most of them): amsmath, amssymb, amsthm,
+%  booktabs, graphicx, natbib.  No tikz is needed: the architecture diagram is a PDF.
+%  Figures (folder figures/): architectures.pdf, transfer_metrics.png, training_curves.png.
+%  Citation keys are defined in refs_population_transfer.bib.
+%  All numbers in the tables are generated from runs/results.json by the code repository.
+% ==============================================================================================
+\makeatletter
+\@ifundefined{proposition}{\newtheorem{proposition}{Proposition}}{}
+\@ifundefined{remark}{\theoremstyle{remark}\newtheorem{remark}{Remark}\theoremstyle{plain}}{}
+\makeatother
+
+\section{Population Transfer with Shared, Independent and Attention Policies}
+\label{sec:pt}
+
+\subsection{Overview and relation to the proposal}
+\label{sec:pt-overview}
+Our proposal asks whether a decentralised policy that satisfies a constraint on one configuration of agents
+keeps satisfying it after the configuration changes. This section studies the \emph{population} axis of that
+question, $N\to N{+}k$ agents, in the simplest setting in which it can be asked cleanly: cooperative
+navigation with a collision-avoidance constraint. The world is deliberately small, so that every number can be
+reproduced on a CPU in minutes and so that the effect of the \emph{policy architecture} on constraint
+preservation is not hidden behind other design choices. 
+
+\paragraph{Contributions.}
+\begin{enumerate}
+  \item A transfer protocol that judges a policy by its \emph{constraint-related} metrics and not by reward
+        alone (Section~\ref{sec:pt-setting}).
+  \item A comparison of three policy families that differ in how they handle a change in the number of agents:
+        independent per-agent networks, a single shared network, and a shared attention network over neighbours,
+        plus an ablation that separates architecture from information (Section~\ref{sec:pt-policies}).
+  \item Empirical findings on how much of the constraint survives transfer and which claims our data do and do not
+        support (Sections~\ref{sec:pt-results}--\ref{sec:pt-limits}).
+\end{enumerate}
+
+\paragraph{Metrics of the proposal.}
+The proposal measures transfer through consensus error, minimum inter-agent separation and constraint-violation
+rate. Our task is goal reaching and not consensus, so there is no consensus error here. We measure the other two
+quantities, and we add goal-reaching success as the measure of task performance.
+
+\subsection{Related work}
+\label{sec:pt-related}
+\paragraph{Independent learners and parameter sharing.}
+Independent learners train one policy per agent \citep{tan1993}. Parameter sharing uses one network for all agents
+and is the standard way to obtain a policy that is defined for any team size \citep{gupta2017}. Both are strong
+baselines in cooperative tasks when trained with PPO \citep{dewitt2020,yu2022}. Centralised training with
+decentralised execution \citep{lowe2017,foerster2016} is the setting assumed in our proposal; our agents are
+trained with local critics and executed in a fully decentralised way.
+
+\paragraph{Set-based and attention architectures.}
+Mean-field methods \citep{yang2018}, attention-based critics \citep{iqbal2019} and permutation-invariant set
+encoders \citep{zaheer2017} treat the neighbours of an agent as a set and therefore apply to any number of
+neighbours. Our attention policy follows this idea with a single attention head \citep{vaswani2017}.
+
+\paragraph{Transfer across agent populations.}
+Transfer in reinforcement learning is surveyed by \citet{taylor2009}. Our focus is how a \emph{collision
+constraint} survives a change in the \emph{number of agents}.
+
+\subsection{Problem setting}
+\label{sec:pt-setting}
+\paragraph{World.}
+$N$ agents move in the unit square $[0,1]^2$. Agent $i$ has position $p_i^t$ and a goal $g_i$. There are five
+actions $\mathcal A=\{\text{stay},\text{up},\text{down},\text{left},\text{right}\}$ with displacements
+$\delta(a)\in\{0,\pm s e_1,\pm s e_2\}$, so $\|\delta(a)\|\le s$ with step size $s=0.05$. Positions are updated
+simultaneously,
+\begin{equation}
+  p_i^{t+1}=\Pi_{[0,1]^2}\!\big(p_i^t+\delta(a_i^t)\big),
+\end{equation}
+where $\Pi$ projects back into the arena. An episode lasts $T=50$ steps. Starting positions and goals are
+sampled uniformly, rejecting samples in which two starts or two goals are closer than $0.15$.
+
+\paragraph{Constraint.}
+Two agents \emph{collide} when $\|p_i^t-p_j^t\|<d_c$ with $d_c=0.1$. The constraint is
+\begin{equation}
+  \|p_i^t-p_j^t\|\ \ge\ d_c\qquad\text{for all } i\neq j \text{ and all } t.
+\end{equation}
+
+\paragraph{Observations.}
+Every agent acts only on local information. With $r_{ij}=p_j-p_i$ and $\mathcal N_i^k$ the $k$ agents nearest to $i$,
+\begin{equation}
+  o_i^t=\big(p_i^t,\; g_i-p_i^t,\; (r_{ij}^t)_{j\in\mathcal N_i^k}\big)\in\mathbb R^{4+2k}.
+\end{equation}
+The shared and independent policies use $k=2$, so the observation length does not depend on $N$; this is what
+allows a network trained with $N$ agents to be executed with $N{+}1$. The attention policy receives the
+neighbours as a set whose size may vary (all $N{-}1$ other agents, or only the two nearest in the ablation).
+
+\paragraph{Reward.}
+Each agent receives
+\begin{equation}
+  r_i^t=10\big(\|g_i-p_i^{t-1}\|-\|g_i-p_i^t\|\big)\;-\;\lambda\,\mathbf{1}\!\big[\min_{j\neq i}\|p_i^t-p_j^t\|<d_c\big]\;+\;0.2\,\mathbf{1}\!\big[\|g_i-p_i^t\|<0.05\big],
+\end{equation}
+with collision penalty $\lambda=10$. The collision term is the only coupling between agents.
+
+\paragraph{Transfer protocol.}
+Each policy is trained on $N_{\text{train}}=3$ agents. It is then evaluated \emph{without any retraining} on
+$N\in\{3,4,5,6\}$ agents in the same arena, so the team becomes denser as $N$ grows. As a reference we also train
+each policy family directly on 4 agents. The difference between the transferred and the directly trained policy
+at 4 agents is the \emph{transfer gap} (Section~\ref{sec:pt-results}).
+
+\paragraph{Metrics.}
+For each setting we run 500 evaluation episodes on the same random worlds for all policies (a paired comparison)
+and use greedy (arg\,max) actions. We report means and standard deviations over three training seeds:
+\begin{itemize}
+  \item \textbf{Minimum separation:} $\min_{t,\,i\neq j}\|p_i^t-p_j^t\|$ within an episode, averaged over episodes
+        (higher is safer; values below $d_c$ mean at least one collision).
+  \item \textbf{Violation rate:} $\frac1T\sum_t\mathbf{1}[\exists\, i\neq j:\ \|p_i^t-p_j^t\|<d_c]$, the fraction of
+        time steps with a collision.
+  \item \textbf{Episodes with a collision:} the fraction of episodes with at least one collision.
+  \item \textbf{Success rate:} the fraction of agents with $\|g_i-p_i^T\|<0.05$ at the final step
+        (task performance).
+\end{itemize}
+A hand-coded \emph{greedy} controller that walks straight to its goal and ignores all other agents is included as a
+``no avoidance'' reference. It shows how much of the loss of safety is due to the increased density alone.
+
+\subsection{Policy architectures}
+\label{sec:pt-policies}
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=0.78\linewidth]{figures/architectures.pdf}
+  \caption{The three policy families, shown for a team trained on three agents that gets a fourth agent at test
+  time (dashed). (a)~One network is shared by all agents. (b)~Each agent has its own network; the new agent has
+  none and borrows a copy of agent~1's network. (c)~One shared network encodes the neighbours of an agent as a set
+  and combines them with attention, so an extra neighbour only adds one element to the set.}
+  \label{fig:pt-arch}
+\end{figure}
+
+\paragraph{Shared policy.}
+One actor $\pi_\theta(a\mid o_i)$ and one critic $V_\phi(o_i)$, each a multilayer perceptron with two hidden layers
+of 64 $\tanh$ units, are applied to every agent \citep{gupta2017}. An additional agent simply uses the same
+network, so the policy is defined for every $N$ by construction.
+
+\paragraph{Independent policies.}
+Agent $i$ has its own actor $\pi_{\theta_i}$ and critic $V_{\phi_i}$ \citep{tan1993}. For $N>N_{\text{train}}$
+there is no trained network for the additional agents, so an extension rule is needed. We let agent $i$ use the
+network $\sigma(i)=((i-1)\bmod N_{\text{train}})+1$, i.e.\ the fourth agent receives a copy of agent~1's network.
+This is a design choice and not a property of the method (Section~\ref{sec:pt-limits}).
+
+\paragraph{Attention policy.}
+With $r_{ij}=p_j-p_i$, the policy of agent $i$ computes
+\begin{align}
+  h_i &= \tanh\!\big(W_s[\,p_i;\ g_i-p_i\,]+b_s\big), &
+  e_{ij} &= \tanh\!\big(W_n[\,r_{ij};\ \|r_{ij}\|\,]+b_n\big),\\
+  \alpha_{ij} &= \operatorname*{softmax}_{j}\ \frac{(W_q h_i)^{\top}(W_k e_{ij})}{\sqrt d}, &
+  c_i &= \sum_{j\neq i}\alpha_{ij}\,W_v e_{ij},
+\end{align}
+and outputs $\pi(\cdot\mid o_i)=\operatorname{softmax}\big(f_\theta([h_i;c_i])\big)$ with $d=64$ and $f_\theta$ a
+two-layer MLP; the critic has the same structure. Because $c_i$ is a weighted average over the neighbours, it has
+a fixed size and does not depend on the order of the neighbours: the network is permutation invariant and accepts
+any number of neighbours \citep{zaheer2017}.
+
+\paragraph{Ablation: attention on the two nearest neighbours.}
+The attention policy sees all other agents, whereas the shared and independent policies see only the two nearest.
+To separate architecture from information we also train the \emph{same} attention network on the two nearest
+neighbours only. With three agents the two variants receive identical observations, so they coincide at $N=3$ by
+construction; they can differ only for $N>3$.
+
+\begin{table}[t]
+  \centering\small
+  \caption{Summary of the policies. ``Parameters'' counts actor and critic together for a team trained on three agents.}
+  \label{tab:pt-arch}
+  \begin{tabular}{l c l p{4.1cm} r}
+    \toprule
+    Policy & Networks & Neighbours seen & Extra agent at test time & Parameters \\
+    \midrule
+    Independent            & $N_{\text{train}}$ & 2 nearest & copy of the network of agent $\sigma(i)$ & 29,586 \\
+    Shared                 & 1 & 2 nearest & same network & 9,862 \\
+    Attention (all agents) & 1 & all other agents & same network & 38,278 \\
+    Attention (2 nearest)  & 1 & 2 nearest & same network & 38,278 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\subsection{Training}
+\label{sec:pt-training}
+All policies are trained with proximal policy optimisation \citep{schulman2017} and generalised advantage
+estimation \citep{schulman2016}. Every agent uses only its own observation, both for the actor and for a local
+critic, which corresponds to independent PPO \citep{dewitt2020}; only the actor is needed at execution time. One
+iteration collects 50-step episodes in 64 parallel worlds and then updates the networks for four epochs. For the
+independent policies the loss of every agent's network is computed on that agent's own experience. The settings are
+listed in Table~\ref{tab:pt-hyper}.
+
+\begin{table}[t]
+  \centering\small
+  \caption{Training settings (identical for all policy families).}
+  \label{tab:pt-hyper}
+  \begin{tabular}{ll}
+    \toprule
+    Quantity & Value \\
+    \midrule
+    Algorithm & PPO with GAE, local critics \\
+    Optimiser & Adam, learning rate $10^{-3}$ \\
+    Discount $\gamma$ / GAE $\lambda_{\text{GAE}}$ & 0.97 / 0.95 \\
+    Clip range / entropy coefficient / value coefficient & 0.2 / 0.01 / 0.5 \\
+    Gradient-norm clip & 0.5 \\
+    Epochs per iteration / minibatch (world steps) & 4 / 512 \\
+    Parallel worlds $\times$ steps per iteration & $64\times 50$ \\
+    Iterations & 400 ($\approx$ 1.3 million world steps) \\
+    Reward weights (progress / collision / goal) & 10 / 10 / 0.2 \\
+    Training seeds & 0, 1, 2 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\paragraph{The one tuned quantity.}
+The collision penalty $\lambda$ was the only value we tuned. In a pilot with the shared policy, $\lambda=1$ and
+$\lambda=3$ produced behaviour that was close to the greedy controller (agents had little incentive to avoid each
+other), and $\lambda=10$ was the next value we tried and the first to give clear avoidance. We then used
+$\lambda=10$ for all policies and all experiments. The pilot used the same evaluation worlds as the final
+evaluation, which can make the absolute collision numbers slightly optimistic; it cannot favour one policy family,
+since the value was fixed before the other families were trained.
+
+\subsection{Experiments and results}
+\label{sec:pt-results}
+We train three seeds of every policy family on three agents (and, for the reference, three seeds of each of the
+three main families on four agents) and evaluate on 3, 4, 5 and 6 agents.
+All tables give the mean $\pm$ standard deviation over the three training seeds (population standard deviation).
+With only three seeds we interpret large differences and treat differences of the order of the seed spread as
+inconclusive.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{figures/transfer_metrics.png}
+  \caption{Transfer from three to $N$ agents without retraining. Lines are means over three training seeds, faint dots
+  are individual seeds, and the hollow diamonds are policies trained directly on four agents. \emph{Left:} minimum
+  separation (collision below $0.1$). \emph{Middle:} fraction of time steps with a collision. \emph{Right:} fraction
+  of agents on their goal at the end. The ``2 nearest'' attention variant (triangles) lies on top of the attention
+  policy that sees all agents.}
+  \label{fig:pt-transfer}
+\end{figure}
+
+\begin{table}[t]
+  \centering\small
+  \caption{Percentage of episodes with at least one collision (lower is safer).}
+  \label{tab:pt-collision}
+\begin{tabular}{l cccc}
+\toprule
+ & \multicolumn{4}{c}{Number of agents at test time} \\
+\cmidrule(lr){2-5}
+Policy (trained on 3 agents) & 3 (trained) & 4 & 5 & 6 \\
+\midrule
+Greedy (no avoidance) & 40.0 $\pm$ 0.0 & 66.6 $\pm$ 0.0 & 81.6 $\pm$ 0.0 & 92.8 $\pm$ 0.0 \\
+\midrule
+Independent & 20.7 $\pm$ 1.9 & 38.7 $\pm$ 1.4 & 58.4 $\pm$ 2.6 & 71.7 $\pm$ 2.2 \\
+Shared & 16.3 $\pm$ 2.0 & 32.8 $\pm$ 3.9 & 49.5 $\pm$ 4.2 & 66.1 $\pm$ 3.4 \\
+Attention (all agents) & 1.0 $\pm$ 0.2 & 3.0 $\pm$ 0.8 & 9.0 $\pm$ 3.1 & 15.3 $\pm$ 4.2 \\
+Attention (2 nearest) & 1.0 $\pm$ 0.2 & 2.9 $\pm$ 1.1 & 8.3 $\pm$ 3.6 & 12.8 $\pm$ 5.7 \\
+\midrule
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[t]
+  \centering\small
+  \caption{Minimum separation within an episode, averaged over episodes (higher is safer; the collision distance is
+  $0.1$).}
+  \label{tab:pt-minsep}
+\begin{tabular}{l cccc}
+\toprule
+ & \multicolumn{4}{c}{Number of agents at test time} \\
+\cmidrule(lr){2-5}
+Policy (trained on 3 agents) & 3 (trained) & 4 & 5 & 6 \\
+\midrule
+Greedy (no avoidance) & 0.144 $\pm$ 0.000 & 0.089 $\pm$ 0.000 & 0.061 $\pm$ 0.000 & 0.045 $\pm$ 0.000 \\
+\midrule
+Independent & 0.192 $\pm$ 0.005 & 0.132 $\pm$ 0.003 & 0.095 $\pm$ 0.003 & 0.073 $\pm$ 0.004 \\
+Shared & 0.201 $\pm$ 0.005 & 0.139 $\pm$ 0.005 & 0.104 $\pm$ 0.005 & 0.082 $\pm$ 0.004 \\
+Attention (all agents) & 0.214 $\pm$ 0.008 & 0.172 $\pm$ 0.008 & 0.148 $\pm$ 0.006 & 0.131 $\pm$ 0.004 \\
+Attention (2 nearest) & 0.214 $\pm$ 0.008 & 0.173 $\pm$ 0.008 & 0.150 $\pm$ 0.007 & 0.134 $\pm$ 0.007 \\
+\midrule
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[t]
+  \centering\small
+  \caption{Percentage of time steps with a collision.}
+  \label{tab:pt-violation}
+\begin{tabular}{l cccc}
+\toprule
+ & \multicolumn{4}{c}{Number of agents at test time} \\
+\cmidrule(lr){2-5}
+Policy (trained on 3 agents) & 3 (trained) & 4 & 5 & 6 \\
+\midrule
+Greedy (no avoidance) & 2.80 $\pm$ 0.00 & 5.61 $\pm$ 0.00 & 8.76 $\pm$ 0.00 & 12.74 $\pm$ 0.00 \\
+\midrule
+Independent & 1.01 $\pm$ 0.11 & 2.07 $\pm$ 0.11 & 3.83 $\pm$ 0.25 & 5.64 $\pm$ 0.48 \\
+Shared & 0.76 $\pm$ 0.11 & 1.71 $\pm$ 0.14 & 3.23 $\pm$ 0.09 & 4.96 $\pm$ 0.15 \\
+Attention (all agents) & 0.04 $\pm$ 0.02 & 0.17 $\pm$ 0.09 & 0.42 $\pm$ 0.19 & 0.90 $\pm$ 0.31 \\
+Attention (2 nearest) & 0.04 $\pm$ 0.02 & 0.16 $\pm$ 0.11 & 0.42 $\pm$ 0.23 & 0.95 $\pm$ 0.52 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[t]
+  \centering\small
+  \caption{Success rate in percent (agents on their goal at the end of the episode).}
+  \label{tab:pt-success}
+\begin{tabular}{l cccc}
+\toprule
+ & \multicolumn{4}{c}{Number of agents at test time} \\
+\cmidrule(lr){2-5}
+Policy (trained on 3 agents) & 3 (trained) & 4 & 5 & 6 \\
+\midrule
+Greedy (no avoidance) & 100.0 $\pm$ 0.0 & 100.0 $\pm$ 0.0 & 100.0 $\pm$ 0.0 & 100.0 $\pm$ 0.0 \\
+\midrule
+Independent & 96.2 $\pm$ 0.6 & 96.3 $\pm$ 0.3 & 97.0 $\pm$ 0.2 & 97.1 $\pm$ 0.7 \\
+Shared & 98.8 $\pm$ 0.5 & 98.9 $\pm$ 0.5 & 98.9 $\pm$ 0.6 & 98.8 $\pm$ 0.7 \\
+Attention (all agents) & 97.4 $\pm$ 1.6 & 96.5 $\pm$ 1.6 & 94.9 $\pm$ 1.4 & 94.1 $\pm$ 1.3 \\
+Attention (2 nearest) & 97.4 $\pm$ 1.6 & 96.2 $\pm$ 2.0 & 94.5 $\pm$ 1.9 & 92.9 $\pm$ 2.2 \\
+\midrule
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Task success transfers, constraint satisfaction does not.}
+Every learned policy reaches its goals in at least 92.9\,\% of the cases at every team size
+(Table~\ref{tab:pt-success}), so the task itself transfers. The constraint does not. The share of episodes with a
+collision (Table~\ref{tab:pt-collision}) is $16.3\,\%$ (shared) and $20.7\,\%$ (independent) with three agents and
+roughly doubles when a fourth agent is added ($32.8\,\%$ and $38.7\,\%$); with six agents it is $66.1\,\%$ and
+$71.7\,\%$. The mean minimum separation of the independent policies falls below the collision distance of $0.1$ at five
+agents and that of the shared policy at six agents (Table~\ref{tab:pt-minsep}). A policy that looks successful by
+its task reward can therefore already have lost much of its safety.
+
+\paragraph{Part of the loss is density.}
+The greedy controller, which has no avoidance at all, goes from $40.0\,\%$ to $92.8\,\%$ of episodes with a collision
+between three and six agents, so a denser team is harder for any controller. The shared and independent policies
+stay below the greedy controller at every size, but their advantage over it stays between $19$ and $34$ percentage points
+and is smaller with six agents than with four: the increase from three to six agents is $49.8$ and $50.9$ points for
+the shared and independent policies, against $52.8$ for the greedy controller. The advantage of the attention policy
+over the greedy controller, in contrast, keeps growing, from $39$ to $78$ points.
+
+\paragraph{The attention policy degrades much more slowly, and the cause is the architecture.}
+The attention policy has $1.0\,\%$ of episodes with a collision at three agents and $15.3\,\%$ at six (an increase of
+$14.3$ points), with a mean minimum separation of $0.131$ at six agents, still above $d_c$.
+One might suspect that this is only because it sees all agents, whereas the other two see the two nearest. The
+ablation rules this out for our setting: the same network fed only the two nearest neighbours reaches $12.8\,\%$ at
+six agents (versus $15.3\,\%$; the difference is smaller than the seed spread of $4$--$6$ points) and is
+indistinguishable at four and five agents (Table~\ref{tab:pt-collision}, Figure~\ref{fig:pt-transfer}). Seeing more
+neighbours gave no measurable benefit. The comparison between the attention-on-two-nearest policy and the shared
+policy differs in the architecture only, but ``architecture'' here is a bundle: set-structure with attention weights, an
+explicit distance input $\|r_{ij}\|$, separate encoders, and about four times more parameters (Table~\ref{tab:pt-arch}).
+We did not ablate these factors individually.
+
+\paragraph{Shared versus independent.}
+The shared policy is better than the independent policies in every column: $4.4$ to $8.9$ points fewer episodes with a
+collision, a larger minimum separation and a higher success rate ($98.8\,\%$ versus $96.2\,\%$ at three agents). The
+collision differences are of the same order as the seed spread ($1.4$--$4.2$ points), so we do not claim them to be
+significant; the success difference is larger than the spread. Training curves
+(Figure~\ref{fig:pt-train}) show that the shared policy learns faster than the independent ones, which is expected
+since one network learns from the experience of all agents, and that the attention policy learns fastest.
+
+\paragraph{Transfer gap.}
+Table~\ref{tab:pt-gap} compares policies transferred from three to four agents with policies trained directly on four
+agents. For the shared and independent policies the gap is large: $+17.7$ and $+12.9$ percentage points of episodes with a
+collision. Directly trained policies are safer but succeed slightly less often, i.e.\ they trade some task success for
+safety. For the attention policy there is no measurable gap ($-5.3$ points with a standard deviation of $8.7$); the
+directly trained attention policies have $20.6\,\%$, $2.6\,\%$ and $1.8\,\%$ in the three seeds, so the poor average
+comes from a single seed, and the transferred policy ($3.0\,\%$) is as safe as the two good ones. The reference runs use
+the same training budget as the others and are therefore not necessarily converged.
+
+\begin{table}[t]
+  \centering\small
+  \caption{Transfer gap at four agents: policies trained on three agents and transferred, versus policies trained
+  directly on four agents. A positive gap means the transferred policy has more collisions (percentage points).}
+  \label{tab:pt-gap}
+\begin{tabular}{l cc c cc}
+\toprule
+ & \multicolumn{3}{c}{Episodes with a collision (\%)} & \multicolumn{2}{c}{Success rate (\%)} \\
+\cmidrule(lr){2-4}\cmidrule(lr){5-6}
+Policy & Transferred ($3\!\to\!4$) & Trained on 4 & Gap (pp) & Transferred & Trained on 4 \\
+\midrule
+Independent & 38.7 $\pm$ 1.4 & 25.8 $\pm$ 1.1 & +12.9 & 96.3 $\pm$ 0.3 & 92.0 $\pm$ 0.5 \\
+Shared & 32.8 $\pm$ 3.9 & 15.1 $\pm$ 6.3 & +17.7 & 98.9 $\pm$ 0.5 & 96.9 $\pm$ 1.3 \\
+Attention (all agents) & 3.0 $\pm$ 0.8 & 8.3 $\pm$ 8.7 & -5.3 & 96.5 $\pm$ 1.6 & 93.7 $\pm$ 4.0 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=0.92\linewidth]{figures/training_curves.png}
+  \caption{Training curves on three agents (mean over three seeds, band = min to max; moving average of 10
+  iterations). Left: training return. Right: fraction of time steps with a collision during training.}
+  \label{fig:pt-train}
+\end{figure}
+
+\subsection{Discussion}
+\label{sec:pt-discussion}
+\paragraph{What this says about constraint-preserving transfer.}
+Transfer of the task and transfer of the constraint are different things. The task survived a change of population
+almost perfectly, while the constraint did not, and the loss was not predicted by task performance. For the
+proposal this means that preservation of a constraint cannot be assumed from successful transfer; it has to be
+measured directly. In our experiments, the set-based attention architecture preserved much more of the constraint
+than the concatenated-observation policies, and its transfer gap at four agents was not measurable.
+
+\paragraph{Information.}
+When the team outgrows a $k$-nearest observation, each agent no longer observes every other agent. Our ablation
+shows that, for the attention policy, observing all neighbours rather than only the two nearest did not improve the
+measured collision outcomes. In this setting, the transfer gap is therefore not explained by this information
+difference alone.
+
+\paragraph{Practical reading.}
+If a team may grow, the set-based attention policy is the most robust of the learned policies we tested: it has the
+lowest collision rate while retaining high goal-reaching success across all evaluated team sizes.
+
+\subsection{Limitations and threats to validity}
+\label{sec:pt-limits}
+\begin{itemize}
+  \item \textbf{A small world.} The dynamics are discrete and noise free, there is no communication, and the arena is
+        fixed, so the team becomes denser as it grows. Conclusions about larger teams, continuous dynamics or noise are
+        not supported.
+  \item \textbf{Three seeds.} We report means and standard deviations over three seeds without confidence intervals;
+        only large effects (for example attention versus the other policy families) are reliable. The comparison between
+        shared and independent policies is suggestive only.
+  \item \textbf{Density and policy are confounded in $N$.} The greedy controller shows how large the density effect
+        alone is; we did not run an experiment with an arena that grows with $N$.
+  \item \textbf{``Architecture'' is a bundle.} The attention policy differs from the shared policy in set structure,
+        attention weights, an explicit distance input and the number of parameters. We did not separate these factors,
+        so we cannot say which one matters.
+  \item \textbf{Reference runs.} The policies trained directly on four agents use the same 400 iterations as all others and
+        one attention seed is clearly worse than the other two, so ``trained on 4'' is not a converged optimum.
+  \item \textbf{Tuning.} The collision penalty was tuned on the same evaluation worlds with the shared policy
+        (Section~\ref{sec:pt-training}); all other settings were fixed in advance.
+  \item \textbf{Extension rule for independent policies.} Giving the new agent a copy of agent~1's network is one choice
+        among several (random initialisation, an average of the trained networks); the results for independent
+        policies depend on it.
+  \item \textbf{Metrics.} Success is measured at the final step only, and evaluation uses greedy actions; stochastic
+        execution was not studied.
+\end{itemize}
+
+\paragraph{Future work.}
+(i) Train on a mixture of team sizes; (ii) isolate which components of the attention architecture matter;
+(iii) test whether the findings persist with continuous dynamics, stochastic execution and larger arenas; and
+(iv) combine the population axis with the spatial-scale axis studied in the other parts of the project.
+
+\subsection{Reproducibility}
+\label{sec:pt-repro}
+All code is in the repository \texttt{marl-population-transfer} (files \texttt{env.py}, \texttt{policies.py},
+\texttt{train.py}, \texttt{evaluate.py}, and \texttt{make\_figures.py}).
+\texttt{run\_all.sh} trains all policies (three seeds, 400 iterations) and the four-agent references and produces
+every table and figure of this section; it takes roughly 15--20 minutes on a laptop CPU. Evaluation uses a fixed
+random seed (12345) so that all policies are tested on identical worlds, and every table entry in this section is
+generated from the stored results file.

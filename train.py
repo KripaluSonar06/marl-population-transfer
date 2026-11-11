@@ -31,7 +31,7 @@ from policies import build_policy, save_policy, NEEDS_FULL_NEIGHBORS
 
 
 def compute_gae(rewards, values, last_value, gamma, lam):
-    """Generalized Advantage Estimation. rewards/values: [T,B,N]; last_value: [B,N]."""
+    #Generalized Advantage Estimation. rewards/values: [T,B,N]; last_value: [B,N]."""
     T = rewards.shape[0]
     adv = torch.zeros_like(rewards)
     running = torch.zeros_like(last_value)
@@ -55,7 +55,7 @@ def train(kind, n_agents, iters, batch_envs, seed, out_dir,
     t0 = time.time()
 
     for it in range(iters):
-        # ---------------------------------------------------------- 1. rollout
+        # 1. rollout
         obs = env.reset()
         obs_l, act_l, logp_l, rew_l, val_l = [], [], [], [], []
         for _ in range(env.max_steps):
@@ -75,14 +75,14 @@ def train(kind, n_agents, iters, batch_envs, seed, out_dir,
         obs_t, act_t, logp_t = torch.stack(obs_l), torch.stack(act_l), torch.stack(logp_l)
         rew_t, val_t = torch.stack(rew_l), torch.stack(val_l)
 
-        # ------------------------------------------------------ 2. advantages
+        #2. advantages
         adv, ret = compute_gae(rew_t, val_t, last_value, gamma, lam)
         T, B = rew_t.shape[:2]
         flat = lambda x: x.reshape(T * B, *x.shape[2:])
         obs_f, act_f, logp_f, adv_f, ret_f = map(flat, (obs_t, act_t, logp_t, adv, ret))
         adv_f = (adv_f - adv_f.mean()) / (adv_f.std() + 1e-8)
 
-        # ----------------------------------------------------------- 3. update
+        # 3. update
         for _ in range(epochs):
             perm = torch.randperm(T * B)
             for s in range(0, T * B, minibatch):
@@ -115,7 +115,7 @@ def train(kind, n_agents, iters, batch_envs, seed, out_dir,
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
-    p.add_argument("--policy", choices=["shared", "independent", "attention"], required=True)
+    p.add_argument("--policy", choices=["shared", "independent", "attention", "attention_knn"], required=True)
     p.add_argument("--n-agents", type=int, default=3, help="team size used for TRAINING")
     p.add_argument("--iters", type=int, default=300)
     p.add_argument("--batch-envs", type=int, default=64)

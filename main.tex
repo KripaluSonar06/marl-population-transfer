@@ -1,0 +1,43 @@
+% Standalone wrapper for the population-transfer report section.
+% Build: pdflatex main && bibtex main && pdflatex main && pdflatex main
+\documentclass[11pt,a4paper]{article}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{microtype}
+\usepackage[authoryear,round]{natbib}
+\usepackage[font=small,labelfont=bf]{caption}
+\usepackage[dvipsnames]{xcolor}
+\usepackage[colorlinks=true,linkcolor=blue!50!black,citecolor=blue!50!black,urlcolor=blue!50!black]{hyperref}
+\setlength{\parskip}{0.4em}
+\setlength{\parindent}{0pt}
+
+\title{\textbf{Enforcing Constraints for Policy Transfer Across Agent Populations and Spatial Scales}\\[2pt]
+\large Individual contribution: population transfer ($N\to N{+}k$) with shared, independent and attention policies}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+\noindent
+A decentralised policy trained for a team of $N$ agents is often reused when the team grows. Task performance may
+survive this change while the \emph{constraints} the policy was meant to respect do not. We study this in a controlled
+cooperative-navigation world with a collision-avoidance constraint. We train three policy families on three agents
+(independent per-agent networks, one shared network, and a shared attention network over neighbours) and test them
+without retraining on three to six agents, measuring minimum inter-agent separation, collision rate and goal-reaching
+success. Task success transfers almost perfectly, but constraint satisfaction does not: the fraction of episodes with a
+collision roughly doubles when a fourth agent is added for the shared and independent policies. The attention policy
+degrades far more slowly, and an ablation shows that this is due to the architecture rather than only to seeing more
+neighbours.
+\end{abstract}
+
+\input{population_transfer_section}
+
+\bibliographystyle{plainnat}
+\bibliography{refs_population_transfer}
+
+\end{document}
